@@ -1,0 +1,60 @@
+name: Build MSN-GUARD Windows Full GUI (with TUN/Tunnel)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "main", "master" ]
+
+jobs:
+  build-windows-full-tunnel:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: x86_64-pc-windows-msvc
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Build Dependencies (NASM & Perl)
+        run: |
+          choco install nasm -y
+          choco install strawberryperl -y
+          echo "C:\Program Files\NASM" >> $env:GITHUB_PATH
+
+      - name: 1. Build aether.exe Core (with TUN support)
+        run: |
+          cargo build --release --manifest-path core/aether/Cargo.toml --bin aether
+          New-Item -ItemType Directory -Force -Path "src-tauri/binaries"
+          
+          # 复制编译好的核心
+          Copy-Item "core/aether/target/release/aether.exe" "src-tauri/binaries/aether-x86_64-pc-windows-msvc.exe"
+          
+          # 如果项目需要 wintun.dll，可以从官方下载并放入 binaries 供 Windows 使用
+          Invoke-WebRequest -Uri "https://www.wintun.net/builds/wintun-0.14.1.zip" -OutFile "wintun.zip"
+          Expand-Archive -Path "wintun.zip" -DestinationPath "wintun_extracted"
+          Copy-Item "wintun_extracted/wintun/bin/amd64/wintun.dll" "src-tauri/binaries/wintun.dll"
+
+      - name: 2. Build Frontend UI & Tauri Windows App
+        run: |
+          npm install
+          npm run tauri build
+
+      - name: 3. Upload Windows Full GUI Installer (with Tunnel)
+        uses: actions/upload-artifact@v4
+        with:
+          name: MSN-GUARD-Windows-Full-GUI-With-Tunnel
+          path: |
+            src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/release/bundle/msi/*.msi
+          if-no-files-found: error
